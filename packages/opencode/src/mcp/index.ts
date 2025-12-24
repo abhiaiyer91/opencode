@@ -5,6 +5,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { type Tool as MCPToolDef, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js"
+import { MCPClient as MastraMCPClient } from "@mastra/mcp"
 import { Config } from "../config/config"
 import { Log } from "../util/log"
 import { NamedError } from "@opencode-ai/util/error"
@@ -18,6 +19,7 @@ import { McpAuth } from "./auth"
 import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
+import { createMastraClient, getMastraTools } from "./mastra"
 import open from "open"
 
 export namespace MCP {
@@ -126,31 +128,69 @@ export namespace MCP {
       const config = cfg.mcp ?? {}
       const clients: Record<string, MCPClient> = {}
       const status: Record<string, Status> = {}
+      const isMastra = cfg.experimental?.mastra?.enabled !== false
 
-      await Promise.all(
-        Object.entries(config).map(async ([key, mcp]) => {
-          // If disabled by config, mark as disabled without trying to connect
-          if (mcp.enabled === false) {
-            status[key] = { status: "disabled" }
-            return
+      // If Mastra is enabled, create a Mastra client for all servers
+      let mastraClient: MastraMCPClient | undefined
+      if (isMastra && Object.keys(config).length > 0) {
+        const result = await createMastraClient(config).catch((err) => {
+          log.error("failed to create mastra mcp client", { error: err })
+          return undefined
+        })
+        if (result) {
+          mastraClient = result.client
+          // Mark all servers that were configured as connected
+          for (const key of result.serverKeys) {
+            status[key] = { status: "connected" }
           }
-
-          const result = await create(key, mcp).catch(() => undefined)
-          if (!result) return
-
-          status[key] = result.status
-
-          if (result.mcpClient) {
-            clients[key] = result.mcpClient
+          // Mark disabled servers
+          for (const [key, mcp] of Object.entries(config)) {
+            if (mcp.enabled === false) {
+              status[key] = { status: "disabled" }
+            }
           }
-        }),
-      )
+          log.info("created mastra mcp client", { serverCount: result.serverKeys.length })
+        }
+      }
+
+      // Fall back to legacy client creation if Mastra is disabled or failed
+      if (!isMastra || !mastraClient) {
+        await Promise.all(
+          Object.entries(config).map(async ([key, mcp]) => {
+            // If disabled by config, mark as disabled without trying to connect
+            if (mcp.enabled === false) {
+              status[key] = { status: "disabled" }
+              return
+            }
+
+            const result = await create(key, mcp).catch(() => undefined)
+            if (!result) return
+
+            status[key] = result.status
+
+            if (result.mcpClient) {
+              clients[key] = result.mcpClient
+            }
+          }),
+        )
+      }
+
       return {
         status,
         clients,
+        mastraClient,
+        isMastra: isMastra && !!mastraClient,
       }
     },
     async (state) => {
+      // Disconnect Mastra client if present
+      if (state.mastraClient) {
+        await state.mastraClient.disconnect().catch((error) => {
+          log.error("Failed to disconnect Mastra MCP client", { error })
+        })
+      }
+
+      // Close legacy clients
       await Promise.all(
         Object.values(state.clients).map((client) =>
           client.close().catch((error) => {
@@ -445,8 +485,15 @@ export namespace MCP {
   }
 
   export async function tools() {
-    const result: Record<string, Tool> = {}
     const s = await state()
+
+    // If using Mastra, get tools from Mastra client
+    if (s.isMastra && s.mastraClient) {
+      return getMastraTools(s.mastraClient)
+    }
+
+    // Fall back to legacy tool retrieval
+    const result: Record<string, Tool> = {}
     const clientsSnapshot = await clients()
 
     for (const [clientName, client] of Object.entries(clientsSnapshot)) {
