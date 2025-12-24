@@ -47,6 +47,10 @@ export namespace SessionProcessor {
           try {
             const prepared = await LLM.prepare(streamInput)
 
+            log.info("prepared", {
+              prepared: prepared.input.messages,
+            })
+
             if (isMastra) {
               const stream = await MastraLLM.stream(prepared)
               await MastraLLM.processStream(stream, {

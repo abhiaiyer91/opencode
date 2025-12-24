@@ -43,6 +43,7 @@ import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
+import { Token } from "@/util/token"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -479,6 +480,35 @@ export namespace SessionPrompt {
         agent,
       })
 
+      // Build system and messages first for pre-flight token check
+      const sessionMessages = clone(msgs)
+      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
+
+      const system = [...(await SystemPrompt.environment()), ...(await SystemPrompt.custom())]
+      const messages = [
+        ...MessageV2.toModelMessage(sessionMessages),
+        ...(isLastStep
+          ? [
+              {
+                role: "assistant" as const,
+                content: MAX_STEPS,
+              },
+            ]
+          : []),
+      ]
+
+      // pre-flight token estimate check - must happen before creating assistant message
+      const estimatedTokens = Token.estimateSystem(system) + Token.estimateMessages(messages)
+      if (SessionCompaction.isOverflowEstimate({ estimatedTokens, model })) {
+        await SessionCompaction.create({
+          sessionID,
+          agent: lastUser.agent,
+          model: lastUser.model,
+          auto: true,
+        })
+        continue
+      }
+
       const processor = SessionProcessor.create({
         assistantMessage: (await Session.updateMessage({
           id: Identifier.ascending("message"),
@@ -523,27 +553,13 @@ export namespace SessionPrompt {
         })
       }
 
-      const sessionMessages = clone(msgs)
-
-      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
-
       const result = await processor.process({
         user: lastUser,
         agent,
         abort,
         sessionID,
-        system: [...(await SystemPrompt.environment()), ...(await SystemPrompt.custom())],
-        messages: [
-          ...MessageV2.toModelMessage(sessionMessages),
-          ...(isLastStep
-            ? [
-              {
-                role: "assistant" as const,
-                content: MAX_STEPS,
-              },
-            ]
-            : []),
-        ],
+        system,
+        messages,
         tools,
         model,
         maxSteps: agent.maxSteps,
@@ -831,7 +847,7 @@ export namespace SessionPrompt {
                       agent: input.agent!,
                       messageID: info.id,
                       extra: { bypassCwdCheck: true, model },
-                      metadata: async () => { },
+                      metadata: async () => {},
                     })
                     pieces.push({
                       id: Identifier.ascending("part"),
@@ -891,7 +907,7 @@ export namespace SessionPrompt {
                     agent: input.agent!,
                     messageID: info.id,
                     extra: { bypassCwdCheck: true },
-                    metadata: async () => { },
+                    metadata: async () => {},
                   }),
                 )
                 return [
@@ -1353,15 +1369,15 @@ export namespace SessionPrompt {
     const parts =
       (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
         ? [
-          {
-            type: "subtask" as const,
-            agent: agent.name,
-            description: command.description ?? "",
-            command: input.command,
-            // TODO: how can we make task tool accept a more complex input?
-            prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
-          },
-        ]
+            {
+              type: "subtask" as const,
+              agent: agent.name,
+              description: command.description ?? "",
+              command: input.command,
+              // TODO: how can we make task tool accept a more complex input?
+              prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
+            },
+          ]
         : await resolvePromptParts(template)
 
     const result = (await prompt({
