@@ -82,7 +82,7 @@ export namespace SessionSummary {
     const textPart = msgWithParts.parts.find((p) => p.type === "text" && !p.synthetic) as MessageV2.TextPart
     if (textPart && !userMsg.summary?.title) {
       const agent = await Agent.get("title")
-      const stream = await LLM.stream({
+      const stream = await LLM.streamFromInput({
         agent,
         user: userMsg,
         tools: {},
@@ -125,7 +125,7 @@ export namespace SessionSummary {
           }
         }
         const summaryAgent = await Agent.get("summary")
-        const stream = await LLM.stream({
+        const stream = await LLM.streamFromInput({
           agent: summaryAgent,
           user: userMsg,
           tools: {},

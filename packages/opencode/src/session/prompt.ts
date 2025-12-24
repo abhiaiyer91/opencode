@@ -537,15 +537,16 @@ export namespace SessionPrompt {
           ...MessageV2.toModelMessage(sessionMessages),
           ...(isLastStep
             ? [
-                {
-                  role: "assistant" as const,
-                  content: MAX_STEPS,
-                },
-              ]
+              {
+                role: "assistant" as const,
+                content: MAX_STEPS,
+              },
+            ]
             : []),
         ],
         tools,
         model,
+        maxSteps: agent.maxSteps,
       })
       if (result === "stop") break
       continue
@@ -830,7 +831,7 @@ export namespace SessionPrompt {
                       agent: input.agent!,
                       messageID: info.id,
                       extra: { bypassCwdCheck: true, model },
-                      metadata: async () => {},
+                      metadata: async () => { },
                     })
                     pieces.push({
                       id: Identifier.ascending("part"),
@@ -890,7 +891,7 @@ export namespace SessionPrompt {
                     agent: input.agent!,
                     messageID: info.id,
                     extra: { bypassCwdCheck: true },
-                    metadata: async () => {},
+                    metadata: async () => { },
                   }),
                 )
                 return [
@@ -1352,15 +1353,15 @@ export namespace SessionPrompt {
     const parts =
       (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
         ? [
-            {
-              type: "subtask" as const,
-              agent: agent.name,
-              description: command.description ?? "",
-              command: input.command,
-              // TODO: how can we make task tool accept a more complex input?
-              prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
-            },
-          ]
+          {
+            type: "subtask" as const,
+            agent: agent.name,
+            description: command.description ?? "",
+            command: input.command,
+            // TODO: how can we make task tool accept a more complex input?
+            prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
+          },
+        ]
         : await resolvePromptParts(template)
 
     const result = (await prompt({
@@ -1396,7 +1397,7 @@ export namespace SessionPrompt {
     if (!isFirst) return
     const agent = await Agent.get("title")
     if (!agent) return
-    const result = await LLM.stream({
+    const result = await LLM.streamFromInput({
       agent,
       user: input.message.info as MessageV2.User,
       system: [],
