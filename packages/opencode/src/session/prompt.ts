@@ -546,6 +546,7 @@ export namespace SessionPrompt {
         ],
         tools,
         model,
+        maxSteps: agent.maxSteps,
       })
       if (result === "stop") break
       continue
@@ -1396,7 +1397,7 @@ export namespace SessionPrompt {
     if (!isFirst) return
     const agent = await Agent.get("title")
     if (!agent) return
-    const result = await LLM.stream({
+    const result = await LLM.streamFromInput({
       agent,
       user: input.message.info as MessageV2.User,
       system: [],
