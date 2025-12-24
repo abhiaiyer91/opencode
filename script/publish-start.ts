@@ -9,11 +9,7 @@ const notes = [] as string[]
 console.log("=== publishing ===\n")
 
 if (!Script.preview) {
-<<<<<<< HEAD
-  const previous = await fetch("https://api.github.com/repos/sst/opencode/releases/latest")
-=======
   const previous = await fetch("https://registry.npmjs.org/mastracode/latest")
->>>>>>> 6e1a2e70a (feat: rename opencode to mastracode for fork)
     .then((res) => {
       if (!res.ok) throw new Error(res.statusText)
       return res.json()
