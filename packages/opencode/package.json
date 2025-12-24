@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "1.0.198",
-  "name": "opencode",
+  "version": "0.0.1",
+  "name": "mastracode",
+  "description": "AI-powered coding assistant with Mastra integration",
   "type": "module",
-  "private": true,
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "test": "bun test",
@@ -17,7 +17,7 @@
     "deploy": "echo 'Deploying application...' && bun run build && echo 'Deployment completed successfully'"
   },
   "bin": {
-    "opencode": "./bin/opencode"
+    "mastracode": "./bin/opencode"
   },
   "exports": {
     "./*": "./src/*.ts"

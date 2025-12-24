@@ -130,7 +130,7 @@ export function Home() {
         </box>
         <box flexGrow={1} />
         <box flexShrink={0} flexDirection="row" gap={1}>
-          <Show when={(sync.data.config.experimental as { mastra?: { enabled?: boolean } })?.mastra?.enabled}>
+          <Show when={(sync.data.config.experimental as { mastra?: { enabled?: boolean } })?.mastra?.enabled !== false}>
             <text fg={theme.textMuted}>Mastra</text>
           </Show>
           <text fg={theme.textMuted}>{Installation.VERSION}</text>

@@ -40,7 +40,8 @@ export namespace SessionProcessor {
         log.info("process")
         const config = await Config.get()
         const shouldBreak = config.experimental?.continue_loop_on_deny !== true
-        const isMastra = config.experimental?.mastra?.enabled === true
+        // Mastra is enabled by default in mastracode, can be disabled with experimental.mastra.enabled = false
+        const isMastra = config.experimental?.mastra?.enabled !== false
 
         while (true) {
           try {

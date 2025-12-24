@@ -309,7 +309,7 @@ export function Sidebar(props: { sessionID: string }) {
             <span style={{ fg: theme.text }}>
               <b>Code</b>
             </span>{" "}
-            <Show when={(sync.data.config.experimental as { mastra?: { enabled?: boolean } })?.mastra?.enabled}>
+            <Show when={(sync.data.config.experimental as { mastra?: { enabled?: boolean } })?.mastra?.enabled !== false}>
               <span>Mastra </span>
             </Show>
             <span>{Installation.VERSION}</span>
