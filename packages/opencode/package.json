@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/package.json",
   "version": "0.0.1",
   "name": "mastracode",
-  "description": "AI-powered coding assistant with Mastra integration",
+  "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsgo --noEmit",
@@ -17,7 +17,7 @@
     "deploy": "echo 'Deploying application...' && bun run build && echo 'Deployment completed successfully'"
   },
   "bin": {
-    "mastracode": "./bin/opencode"
+    "mastracode": "./bin/mastracode"
   },
   "exports": {
     "./*": "./src/*.ts"
