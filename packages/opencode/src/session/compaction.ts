@@ -7,13 +7,13 @@ import { Provider } from "../provider/provider"
 import { MessageV2 } from "./message-v2"
 import z from "zod"
 import { SessionPrompt } from "./prompt"
-import { Flag } from "../flag/flag"
 import { Token } from "../util/token"
 import { Log } from "../util/log"
 import { SessionProcessor } from "./processor"
 import { fn } from "@/util/fn"
 import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
+import { Config } from "@/config/config"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -27,8 +27,9 @@ export namespace SessionCompaction {
     ),
   }
 
-  export function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
-    if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) return false
+  export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
+    const config = await Config.get()
+    if (config.compaction?.auto === false) return false
     const context = input.model.limit.context
     if (context === 0) return false
     const count = input.tokens.input + input.tokens.cache.read + input.tokens.output
@@ -37,78 +38,17 @@ export namespace SessionCompaction {
     return count > usable
   }
 
-  export function isOverflowEstimate(input: { estimatedTokens: number; model: Provider.Model }) {
-    if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) return false
-    const context = input.model.limit.context
-    if (context === 0) return false
-    const output = Math.min(input.model.limit.output, SessionPrompt.OUTPUT_TOKEN_MAX) || SessionPrompt.OUTPUT_TOKEN_MAX
-    const usable = context - output
-    log.info("overflow estimate", {
-      estimatedTokens: input.estimatedTokens,
-      usable,
-      context,
-      output,
-    })
-    return input.estimatedTokens > usable
-  }
-
   export const PRUNE_MINIMUM = 20_000
   export const PRUNE_PROTECT = 40_000
 
   const PRUNE_PROTECTED_TOOLS = ["skill"]
 
-  /**
-   * Truncates messages from the beginning to fit within the model's context limit.
-   * Keeps the most recent messages which are most relevant for compaction summary.
-   */
-  function truncateMessagesForContext(input: {
-    messages: MessageV2.WithParts[]
-    model: Provider.Model
-    reserveTokens: number
-  }): MessageV2.WithParts[] {
-    const context = input.model.limit.context
-    if (context === 0) return input.messages
-
-    const maxTokens = context - input.reserveTokens
-    if (maxTokens <= 0) {
-      log.warn("not enough context for compaction", { context, reserveTokens: input.reserveTokens })
-      return input.messages.slice(-1)
-    }
-
-    // Estimate tokens for each message and accumulate from the end (most recent first)
-    const messages = input.messages
-    let total = 0
-    let cutoffIndex = 0
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]
-      const modelMessages = MessageV2.toModelMessage([msg])
-      const estimate = Token.estimateMessages(modelMessages)
-      if (total + estimate > maxTokens) {
-        cutoffIndex = i + 1
-        break
-      }
-      total += estimate
-    }
-
-    if (cutoffIndex > 0) {
-      log.info("truncating messages for compaction", {
-        original: messages.length,
-        truncated: messages.length - cutoffIndex,
-        estimatedTokens: total,
-        maxTokens,
-      })
-      return messages.slice(cutoffIndex)
-    }
-
-    return messages
-  }
-
   // goes backwards through parts until there are 40_000 tokens worth of tool
   // calls. then erases output of previous tool calls. idea is to throw away old
   // tool calls that are no longer relevant.
   export async function prune(input: { sessionID: string }) {
-    if (Flag.OPENCODE_DISABLE_PRUNE) return
+    const config = await Config.get()
+    if (config.compaction?.prune === false) return
     log.info("pruning")
     const msgs = await Session.messages({ sessionID: input.sessionID })
     let total = 0
@@ -201,14 +141,6 @@ export namespace SessionCompaction {
     const defaultPrompt =
       "Provide a detailed prompt for continuing our conversation above. Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next considering new session will not have access to our conversation."
     const promptText = compacting.prompt ?? [defaultPrompt, ...compacting.context].join("\n\n")
-
-    // Truncate messages to fit within context limit for compaction
-    const truncatedMessages = truncateMessagesForContext({
-      messages: input.messages,
-      model,
-      reserveTokens: Token.estimate(promptText) + SessionPrompt.OUTPUT_TOKEN_MAX,
-    })
-
     const result = await processor.process({
       user: userMessage,
       agent,
@@ -217,7 +149,7 @@ export namespace SessionCompaction {
       tools: {},
       system: [],
       messages: [
-        ...MessageV2.toModelMessage(truncatedMessages),
+        ...MessageV2.toModelMessage(input.messages),
         {
           role: "user",
           content: [

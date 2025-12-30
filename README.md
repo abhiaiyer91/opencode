@@ -9,7 +9,7 @@
 
 ---
 
-> **⚠️ This is an experimental project**
+> **This is an experimental project**
 >
 > MastraCode is a fork of [OpenCode](https://github.com/sst/opencode) that experiments with integrating [Mastra](https://mastra.ai) capabilities into the OpenCode AI coding agent.
 >
@@ -34,6 +34,29 @@ OpenCode is the open source AI coding agent built for the terminal. For full doc
 ```bash
 npm i -g mastracode@dev
 ```
+
+> [!TIP]
+> Remove versions older than 0.1.x before installing.
+
+### Agents
+
+OpenCode includes two built-in agents you can switch between,
+you can switch between these using the `Tab` key.
+
+- **build** - Default, full access agent for development work
+- **plan** - Read-only agent for analysis and code exploration
+  - Denies file edits by default
+  - Asks permission before running bash commands
+  - Ideal for exploring unfamiliar codebases or planning changes
+
+Also, included is a **general** subagent for complex searches and multistep tasks.
+This is used internally and can be invoked using `@general` in messages.
+
+Learn more about [agents](https://opencode.ai/docs/agents).
+
+### Documentation
+
+For more info on how to configure OpenCode [**head over to our docs**](https://opencode.ai/docs).
 
 ### Contributing
 

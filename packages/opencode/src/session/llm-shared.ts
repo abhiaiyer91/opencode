@@ -1,39 +1,31 @@
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
-import { wrapLanguageModel, type ModelMessage, type StreamTextResult, type Tool, type ToolSet } from "ai"
+import { wrapLanguageModel, extractReasoningMiddleware, type Tool } from "ai"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
-import type { Agent } from "@/agent/agent"
-import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { ToolRegistry } from "@/tool/registry"
 import { Flag } from "@/flag/flag"
+import { LLM } from "./llm"
 
+/**
+ * Shared utilities for LLM streaming that can be used by both
+ * the standard LLM implementation and Mastra variant.
+ */
 export namespace LLMShared {
   const log = Log.create({ service: "llm" })
 
   export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 
-  export type StreamInput = {
-    user: MessageV2.User
-    sessionID: string
-    model: Provider.Model
-    agent: Agent.Info
-    system: string[]
-    abort: AbortSignal
-    messages: ModelMessage[]
-    small?: boolean
-    tools: Record<string, Tool>
-    retries?: number
+  // Re-export StreamInput from LLM for compatibility
+  export type StreamInput = LLM.StreamInput & {
     maxSteps?: number
   }
 
-  export type StreamOutput = StreamTextResult<ToolSet, unknown>
-
   export type PreparedStream = {
-    log: typeof log
+    log: ReturnType<typeof log.clone>
     config: Config.Info
     system: string[]
     params: {
@@ -48,6 +40,10 @@ export namespace LLMShared {
     input: StreamInput
   }
 
+  /**
+   * Prepares all the data needed for streaming, shared between LLM and MastraLLM.
+   * This extracts the common preparation logic so both implementations can use it.
+   */
   export async function prepare(input: StreamInput): Promise<PreparedStream> {
     const l = log
       .clone()
@@ -91,6 +87,13 @@ export namespace LLMShared {
     }
 
     const provider = await Provider.getProvider(input.model.providerID)
+    const small = input.small ? ProviderTransform.smallOptions(input.model) : {}
+    const variant = input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
+    let options = ProviderTransform.options(input.model, input.sessionID, provider.options)
+    options = mergeDeep(options, small as typeof options)
+    options = mergeDeep(options, (input.model.options ?? {}) as typeof options)
+    options = mergeDeep(options, (input.agent.options ?? {}) as typeof options)
+    options = mergeDeep(options, (variant ?? {}) as typeof options)
 
     const params = await Plugin.trigger(
       "chat.params",
@@ -107,13 +110,7 @@ export namespace LLMShared {
           : undefined,
         topP: input.agent.topP ?? ProviderTransform.topP(input.model),
         topK: ProviderTransform.topK(input.model),
-        options: pipe(
-          {},
-          mergeDeep(ProviderTransform.options(input.model, input.sessionID, provider.options)),
-          input.small ? mergeDeep(ProviderTransform.smallOptions(input.model)) : mergeDeep({}),
-          mergeDeep(input.model.options),
-          mergeDeep(input.agent.options),
-        ),
+        options,
       },
     )
 
@@ -130,7 +127,7 @@ export namespace LLMShared {
 
     const tools = await resolveTools(input)
 
-    // Cast to work around @ai-sdk/provider version mismatch between dependencies
+    // Cast to work around @ai-sdk/provider version mismatch between AI SDK and Mastra
     const langModel = wrapLanguageModel({
       model: language as Parameters<typeof wrapLanguageModel>[0]["model"],
       middleware: [
@@ -143,6 +140,7 @@ export namespace LLMShared {
             return args.params
           },
         },
+        extractReasoningMiddleware({ tagName: "think", startWithReasoning: false }),
       ],
     })
 

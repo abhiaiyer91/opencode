@@ -43,7 +43,6 @@ import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
-import { Token } from "@/util/token"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -91,6 +90,7 @@ export namespace SessionPrompt {
     noReply: z.boolean().optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     system: z.string().optional(),
+    variant: z.string().optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
         MessageV2.TextPart.omit({
@@ -460,7 +460,7 @@ export namespace SessionPrompt {
       if (
         lastFinished &&
         lastFinished.summary !== true &&
-        SessionCompaction.isOverflow({ tokens: lastFinished.tokens, model })
+        (await SessionCompaction.isOverflow({ tokens: lastFinished.tokens, model }))
       ) {
         await SessionCompaction.create({
           sessionID,
@@ -479,35 +479,6 @@ export namespace SessionPrompt {
         messages: msgs,
         agent,
       })
-
-      // Build system and messages first for pre-flight token check
-      const sessionMessages = clone(msgs)
-      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
-
-      const system = [...(await SystemPrompt.environment()), ...(await SystemPrompt.custom())]
-      const messages = [
-        ...MessageV2.toModelMessage(sessionMessages),
-        ...(isLastStep
-          ? [
-              {
-                role: "assistant" as const,
-                content: MAX_STEPS,
-              },
-            ]
-          : []),
-      ]
-
-      // pre-flight token estimate check - must happen before creating assistant message
-      const estimatedTokens = Token.estimateSystem(system) + Token.estimateMessages(messages)
-      if (SessionCompaction.isOverflowEstimate({ estimatedTokens, model })) {
-        await SessionCompaction.create({
-          sessionID,
-          agent: lastUser.agent,
-          model: lastUser.model,
-          auto: true,
-        })
-        continue
-      }
 
       const processor = SessionProcessor.create({
         assistantMessage: (await Session.updateMessage({
@@ -553,16 +524,29 @@ export namespace SessionPrompt {
         })
       }
 
+      const sessionMessages = clone(msgs)
+
+      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
+
       const result = await processor.process({
         user: lastUser,
         agent,
         abort,
         sessionID,
-        system,
-        messages,
+        system: [...(await SystemPrompt.environment()), ...(await SystemPrompt.custom())],
+        messages: [
+          ...MessageV2.toModelMessage(sessionMessages),
+          ...(isLastStep
+            ? [
+                {
+                  role: "assistant" as const,
+                  content: MAX_STEPS,
+                },
+              ]
+            : []),
+        ],
         tools,
         model,
-        maxSteps: agent.maxSteps,
       })
       if (result === "stop") break
       continue
@@ -744,6 +728,7 @@ export namespace SessionPrompt {
       agent: agent.name,
       model: input.model ?? agent.model ?? (await lastModel(input.sessionID)),
       system: input.system,
+      variant: input.variant,
     }
 
     const parts = await Promise.all(
@@ -1284,6 +1269,7 @@ export namespace SessionPrompt {
     model: z.string().optional(),
     arguments: z.string(),
     command: z.string(),
+    variant: z.string().optional(),
   })
   export type CommandInput = z.infer<typeof CommandInput>
   const bashRegex = /!`([^`]+)`/g
@@ -1386,6 +1372,7 @@ export namespace SessionPrompt {
       model,
       agent: agentName,
       parts,
+      variant: input.variant,
     })) as MessageV2.WithParts
 
     Bus.publish(Command.Event.Executed, {
@@ -1413,7 +1400,7 @@ export namespace SessionPrompt {
     if (!isFirst) return
     const agent = await Agent.get("title")
     if (!agent) return
-    const result = await LLM.streamFromInput({
+    const result = await LLM.stream({
       agent,
       user: input.message.info as MessageV2.User,
       system: [],

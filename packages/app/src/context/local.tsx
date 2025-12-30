@@ -1,5 +1,5 @@
 import { createStore, produce, reconcile } from "solid-js/store"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createMemo } from "solid-js"
 import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } from "remeda"
 import type { FileContent, FileNode, Model, Provider, File as FileStatus } from "@opencode-ai/sdk/v2"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -9,6 +9,7 @@ import { base64Encode } from "@opencode-ai/util/encode"
 import { useProviders } from "@/hooks/use-providers"
 import { DateTime } from "luxon"
 import { persisted } from "@/utils/persist"
+import { showToast } from "@opencode-ai/ui/toast"
 
 export type LocalFile = FileNode &
   Partial<{
@@ -61,44 +62,43 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
-    // Automatically update model when agent changes
-    createEffect(() => {
-      const value = agent.current()
-      if (value.model) {
-        if (isModelValid(value.model))
-          model.set({
-            providerID: value.model.providerID,
-            modelID: value.model.modelID,
-          })
-        // else
-        //   toast.show({
-        //     type: "warning",
-        //     message: `Agent ${value.name}'s configured model ${value.model.providerID}/${value.model.modelID} is not valid`,
-        //     duration: 3000,
-        //   })
-      }
-    })
-
     const agent = (() => {
       const list = createMemo(() => sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden))
       const [store, setStore] = createStore<{
-        current: string
+        current?: string
       }>({
-        current: list()[0].name,
+        current: list()[0]?.name,
       })
       return {
         list,
         current() {
-          return list().find((x) => x.name === store.current)!
+          const available = list()
+          if (available.length === 0) return undefined
+          return available.find((x) => x.name === store.current) ?? available[0]
         },
         set(name: string | undefined) {
-          setStore("current", name ?? list()[0].name)
+          const available = list()
+          if (available.length === 0) {
+            setStore("current", undefined)
+            return
+          }
+          if (name && available.some((x) => x.name === name)) {
+            setStore("current", name)
+            return
+          }
+          setStore("current", available[0].name)
         },
         move(direction: 1 | -1) {
-          let next = list().findIndex((x) => x.name === store.current) + direction
-          if (next < 0) next = list().length - 1
-          if (next >= list().length) next = 0
-          const value = list()[next]
+          const available = list()
+          if (available.length === 0) {
+            setStore("current", undefined)
+            return
+          }
+          let next = available.findIndex((x) => x.name === store.current) + direction
+          if (next < 0) next = available.length - 1
+          if (next >= available.length) next = 0
+          const value = available[next]
+          if (!value) return
           setStore("current", value.name)
           if (value.model)
             model.set({
@@ -199,11 +199,13 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       const current = createMemo(() => {
         const a = agent.current()
+        if (!a) return undefined
         const key = getFirstValidModel(
           () => ephemeral.model[a.name],
           () => a.model,
           fallbackModel,
-        )!
+        )
+        if (!key) return undefined
         return find(key)
       })
 
@@ -249,7 +251,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         cycle,
         set(model: ModelKey | undefined, options?: { recent?: boolean }) {
           batch(() => {
-            setEphemeral("model", agent.current().name, model ?? fallbackModel())
+            const currentAgent = agent.current()
+            if (currentAgent) setEphemeral("model", currentAgent.name, model ?? fallbackModel())
             if (model) updateVisibility(model, "show")
             if (options?.recent && model) {
               const uniq = uniqueBy([model, ...store.recent], (x) => x.providerID + x.modelID)
@@ -276,11 +279,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       const [store, setStore] = createStore<{
         node: Record<string, LocalFile>
       }>({
-        node: Object.fromEntries(sync.data.node.map((x) => [x.path, x])),
+        node: {}, //  Object.fromEntries(sync.data.node.map((x) => [x.path, x])),
       })
 
-      const changeset = createMemo(() => new Set(sync.data.changes.map((f) => f.path)))
-      const changes = createMemo(() => Array.from(changeset()).sort((a, b) => a.localeCompare(b)))
+      // const changeset = createMemo(() => new Set(sync.data.changes.map((f) => f.path)))
+      // const changes = createMemo(() => Array.from(changeset()).sort((a, b) => a.localeCompare(b)))
 
       // createEffect((prev: FileStatus[]) => {
       //   const removed = prev.filter((p) => !sync.data.changes.find((c) => c.path === p.path))
@@ -308,16 +311,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       //   return sync.data.changes
       // }, sync.data.changes)
 
-      const changed = (path: string) => {
-        const node = store.node[path]
-        if (node?.status) return true
-        const set = changeset()
-        if (set.has(path)) return true
-        for (const p of set) {
-          if (p.startsWith(path ? path + "/" : "")) return true
-        }
-        return false
-      }
+      // const changed = (path: string) => {
+      //   const node = store.node[path]
+      //   if (node?.status) return true
+      //   const set = changeset()
+      //   if (set.has(path)) return true
+      //   for (const p of set) {
+      //     if (p.startsWith(path ? path + "/" : "")) return true
+      //   }
+      //   return false
+      // }
 
       // const resetNode = (path: string) => {
       //   setStore("node", path, {
@@ -336,17 +339,26 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       const load = async (path: string) => {
         const relativePath = relative(path)
-        await sdk.client.file.read({ path: relativePath }).then((x) => {
-          if (!store.node[relativePath]) return
-          setStore(
-            "node",
-            relativePath,
-            produce((draft) => {
-              draft.loaded = true
-              draft.content = x.data
-            }),
-          )
-        })
+        await sdk.client.file
+          .read({ path: relativePath })
+          .then((x) => {
+            if (!store.node[relativePath]) return
+            setStore(
+              "node",
+              relativePath,
+              produce((draft) => {
+                draft.loaded = true
+                draft.content = x.data
+              }),
+            )
+          })
+          .catch((e) => {
+            showToast({
+              variant: "error",
+              title: "Failed to load file",
+              description: e.message,
+            })
+          })
       }
 
       const fetch = async (path: string) => {
@@ -385,17 +397,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
 
       const list = async (path: string) => {
-        return sdk.client.file.list({ path: path + "/" }).then((x) => {
-          setStore(
-            "node",
-            produce((draft) => {
-              x.data!.forEach((node) => {
-                if (node.path in draft) return
-                draft[node.path] = node
-              })
-            }),
-          )
-        })
+        return sdk.client.file
+          .list({ path: path + "/" })
+          .then((x) => {
+            setStore(
+              "node",
+              produce((draft) => {
+                x.data!.forEach((node) => {
+                  if (node.path in draft) return
+                  draft[node.path] = node
+                })
+              }),
+            )
+          })
+          .catch(() => {})
       }
 
       const searchFiles = (query: string) => sdk.client.find.files({ query, dirs: "false" }).then((x) => x.data!)
@@ -466,8 +481,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         setChangeIndex(path: string, index: number | undefined) {
           setStore("node", path, "selectedChange", index)
         },
-        changes,
-        changed,
+        // changes,
+        // changed,
         children(path: string) {
           return Object.values(store.node).filter(
             (x) =>
