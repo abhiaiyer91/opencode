@@ -67,6 +67,7 @@ import { Footer } from "./footer.tsx"
 import { usePromptRef } from "../../context/prompt"
 import { Filesystem } from "@/util/filesystem"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
+import { DialogMemory } from "../../component/dialog-memory"
 
 addDefaultParsers(parsers.parsers)
 
@@ -351,6 +352,15 @@ export function Session() {
             setPrompt={(promptInfo) => prompt.set(promptInfo)}
           />
         ))
+      },
+    },
+    {
+      title: "View memory",
+      value: "session.memory",
+      keybind: "session_memory",
+      category: "Session",
+      onSelect: (dialog) => {
+        dialog.replace(() => <DialogMemory sessionID={route.sessionID} />)
       },
     },
     {

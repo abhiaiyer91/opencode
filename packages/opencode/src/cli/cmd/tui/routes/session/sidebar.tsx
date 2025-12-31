@@ -11,10 +11,13 @@ import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
+import { useDialog } from "../../ui/dialog"
+import { DialogMemory } from "../../component/dialog-memory"
 
 export function Sidebar(props: { sessionID: string }) {
   const sync = useSync()
   const { theme } = useTheme()
+  const dialog = useDialog()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
@@ -60,6 +63,17 @@ export function Sidebar(props: { sessionID: string }) {
     }
   })
 
+  const memory = createMemo(() => {
+    const msgs = messages()
+    const userMessages = msgs.filter((x) => x.role === "user").length
+    const assistantMessages = msgs.filter((x) => x.role === "assistant").length
+    return {
+      total: msgs.length,
+      user: userMessages,
+      assistant: assistantMessages,
+    }
+  })
+
   const directory = useDirectory()
   const kv = useKV()
 
@@ -88,13 +102,18 @@ export function Sidebar(props: { sessionID: string }) {
                 <text fg={theme.textMuted}>{session().share!.url}</text>
               </Show>
             </box>
-            <box>
+            <box onMouseDown={() => dialog.replace(() => <DialogMemory sessionID={props.sessionID} />)}>
               <text fg={theme.text}>
                 <b>Context</b>
               </text>
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
               <text fg={theme.textMuted}>{cost()} spent</text>
+              <Show when={memory().total > 0}>
+                <text fg={theme.textMuted}>
+                  {memory().total} messages ({memory().user} you, {memory().assistant} assistant)
+                </text>
+              </Show>
             </box>
             <Show when={mcpEntries().length > 0}>
               <box>
@@ -309,7 +328,9 @@ export function Sidebar(props: { sessionID: string }) {
             <span style={{ fg: theme.text }}>
               <b>Code</b>
             </span>{" "}
-            <Show when={(sync.data.config.experimental as { mastra?: { enabled?: boolean } })?.mastra?.enabled !== false}>
+            <Show
+              when={(sync.data.config.experimental as { mastra?: { enabled?: boolean } })?.mastra?.enabled !== false}
+            >
               <span>Mastra </span>
             </Show>
             <span>{Installation.VERSION}</span>
