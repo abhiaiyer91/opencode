@@ -13,6 +13,8 @@ import { Snapshot } from "@/snapshot"
 import { SessionSummary } from "./summary"
 import { Plugin } from "@/plugin"
 import type { Log } from "@/util/log"
+import { MastraMemory } from "./memory"
+import { Instance } from "@/project/instance"
 
 export namespace MastraLLM {
   // Re-export types for convenience
@@ -44,6 +46,8 @@ export namespace MastraLLM {
     const { log: l, system, params, maxOutputTokens, tools, langModel, input } = prepared
     const { Agent } = await import("@mastra/core/agent")
 
+    const memory = await MastraMemory.get()
+
     const agent = new Agent({
       id: input.agent.name,
       name: input.agent.name,
@@ -54,9 +58,14 @@ export namespace MastraLLM {
       // Cast to work around @ai-sdk/provider version mismatch between AI SDK and Mastra
       model: langModel as any,
       tools,
+      memory,
     })
 
     return agent.stream(input.messages, {
+      memory: {
+        thread: input.sessionID,
+        resource: Instance.project.id,
+      },
       onError(error) {
         l.error("stream error", {
           error,
